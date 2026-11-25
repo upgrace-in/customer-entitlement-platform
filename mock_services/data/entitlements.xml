@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entitlements>
+  <account id="ACC-007">
+    <name>Meridian Healthcare Systems</name>
+    <tier>Platinum</tier>
+    <renewal>2027-01-15</renewal>
+    <arr_usd>480000</arr_usd>
+  </account>
+  <account id="ACC-012">
+    <name>Pinnacle Financial Group</name>
+    <tier>Platinum</tier>
+    <renewal>2027-02-01</renewal>
+    <arr_usd>720000</arr_usd>
+  </account>
+  <account id="ACC-003">
+    <name>NovaTech Industries</name>
+    <tier>Gold</tier>
+    <renewal>2027-06-30</renewal>
+    <arr_usd>210000</arr_usd>
+  </account>
+  <account id="ACC-019">
+    <name>Redwood Logistics Corp</name>
+    <tier>Platinum</tier>
+    <renewal>2027-01-28</renewal>
+    <arr_usd>550000</arr_usd>
+  </account>
+  <account id="ACC-025">
+    <name>Cobalt Education Partners</name>
+    <tier>Silver</tier>
+    <renewal>2027-09-15</renewal>
+    <arr_usd>95000</arr_usd>
+  </account>
+  <account id="ACC-031">
+    <name>Atlas Manufacturing Co</name>
+    <tier>Bronze</tier>
+    <renewal>2028-03-01</renewal>
+    <arr_usd>45000</arr_usd>
+  </account>
+  <account id="ACC-042">
+    <name>Sapphire Retail Holdings</name>
+    <tier>Gold</tier>
+    <renewal>2027-02-10</renewal>
+    <arr_usd>310000</arr_usd>
+  </account>
+  <account id="ACC-050">
+    <name>Vanguard Energy Solutions</name>
+    <tier>Silver</tier>
+    <renewal>2027-11-30</renewal>
+    <arr_usd>125000</arr_usd>
+  </account>
+</entitlements>

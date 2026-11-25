@@ -1,0 +1,170 @@
+[
+  {
+    "account_id": "ACC-007",
+    "month": "2026-09",
+    "protected_tb": 12.4,
+    "api_calls": 1850000,
+    "active_users": 342
+  },
+  {
+    "account_id": "ACC-007",
+    "month": "2026-10",
+    "protected_tb": 13.1,
+    "api_calls": 2010000,
+    "active_users": 358
+  },
+  {
+    "account_id": "ACC-007",
+    "month": "2026-11",
+    "protected_tb": 13.8,
+    "api_calls": 2150000,
+    "active_users": 365
+  },
+  {
+    "account_id": "ACC-012",
+    "month": "2026-09",
+    "protected_tb": 28.5,
+    "api_calls": 5200000,
+    "active_users": 890
+  },
+  {
+    "account_id": "ACC-012",
+    "month": "2026-10",
+    "protected_tb": 30.2,
+    "api_calls": 5680000,
+    "active_users": 912
+  },
+  {
+    "account_id": "ACC-012",
+    "month": "2026-11",
+    "protected_tb": 31.0,
+    "api_calls": 5900000,
+    "active_users": 925
+  },
+  {
+    "account_id": "ACC-003",
+    "month": "2026-09",
+    "protected_tb": 5.2,
+    "api_calls": 720000,
+    "active_users": 185
+  },
+  {
+    "account_id": "ACC-003",
+    "month": "2026-10",
+    "protected_tb": 5.4,
+    "api_calls": 695000,
+    "active_users": 178
+  },
+  {
+    "account_id": "ACC-003",
+    "month": "2026-11",
+    "protected_tb": 5.5,
+    "api_calls": 710000,
+    "active_users": 180
+  },
+  {
+    "account_id": "ACC-019",
+    "month": "2026-09",
+    "protected_tb": 18.7,
+    "api_calls": 3100000,
+    "active_users": 520
+  },
+  {
+    "account_id": "ACC-019",
+    "month": "2026-10",
+    "protected_tb": 20.1,
+    "api_calls": 3350000,
+    "active_users": 545
+  },
+  {
+    "account_id": "ACC-019",
+    "month": "2026-11",
+    "protected_tb": 21.3,
+    "api_calls": 3500000,
+    "active_users": 560
+  },
+  {
+    "account_id": "ACC-025",
+    "month": "2026-09",
+    "protected_tb": 2.1,
+    "api_calls": 310000,
+    "active_users": 95
+  },
+  {
+    "account_id": "ACC-025",
+    "month": "2026-10",
+    "protected_tb": 2.3,
+    "api_calls": 325000,
+    "active_users": 102
+  },
+  {
+    "account_id": "ACC-025",
+    "month": "2026-11",
+    "protected_tb": 2.4,
+    "api_calls": 340000,
+    "active_users": 108
+  },
+  {
+    "account_id": "ACC-031",
+    "month": "2026-09",
+    "protected_tb": 0.8,
+    "api_calls": 95000,
+    "active_users": 32
+  },
+  {
+    "account_id": "ACC-031",
+    "month": "2026-10",
+    "protected_tb": 0.9,
+    "api_calls": 102000,
+    "active_users": 34
+  },
+  {
+    "account_id": "ACC-031",
+    "month": "2026-11",
+    "protected_tb": 0.9,
+    "api_calls": 98000,
+    "active_users": 33
+  },
+  {
+    "account_id": "ACC-042",
+    "month": "2026-09",
+    "protected_tb": 8.9,
+    "api_calls": 1420000,
+    "active_users": 275
+  },
+  {
+    "account_id": "ACC-042",
+    "month": "2026-10",
+    "protected_tb": 9.3,
+    "api_calls": 1510000,
+    "active_users": 288
+  },
+  {
+    "account_id": "ACC-042",
+    "month": "2026-11",
+    "protected_tb": 9.7,
+    "api_calls": 1580000,
+    "active_users": 295
+  },
+  {
+    "account_id": "ACC-050",
+    "month": "2026-09",
+    "protected_tb": 3.5,
+    "api_calls": 480000,
+    "active_users": 142
+  },
+  {
+    "account_id": "ACC-050",
+    "month": "2026-10",
+    "protected_tb": 3.7,
+    "api_calls": 510000,
+    "active_users": 148
+  },
+  {
+    "account_id": "ACC-050",
+    "month": "2026-11",
+    "protected_tb": 3.9,
+    "api_calls": 530000,
+    "active_users": 155
+  }
+]
