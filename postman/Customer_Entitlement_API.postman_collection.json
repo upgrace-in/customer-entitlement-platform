@@ -1,0 +1,271 @@
+{
+  "info": {
+    "_postman_id": "a7c9e210-1122-4455-8899-001122334455",
+    "name": "Customer Entitlement & Support Case API",
+    "description": "Functional, contract, and regression checks for the Customer Entitlement & Support Case API (v1).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Health is healthy', function () { pm.expect(pm.response.json().status).to.eql('healthy'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Customers",
+      "item": [
+        {
+          "name": "GET Customer Aggregated Summary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Has ETag and Correlation-ID headers', function () {",
+                  "  pm.response.to.have.header('ETag');",
+                  "  pm.response.to.have.header('X-Correlation-ID');",
+                  "});",
+                  "pm.test('Contains entitlement and usage fields', function () {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.have.property('support_tier');",
+                  "  pm.expect(json).to.have.property('usage');",
+                  "  pm.expect(json).to.have.property('degraded_sources');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": "{{base_url}}/v1/customers/{{customer_id}}?usage_months=3"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cases",
+      "item": [
+        {
+          "name": "GET List P1 Open Cases",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Has pagination cursor metadata', function () {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.pagination).to.have.property('has_more');",
+                  "  pm.expect(json.pagination).to.have.property('total_count');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": "{{base_url}}/v1/cases?priority=P1&status=open&limit=10"
+          }
+        },
+        {
+          "name": "GET Single Case (Capture ETag)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const etag = pm.response.headers.get('ETag');",
+                  "if (etag) { pm.environment.set('case_etag', etag); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": "{{base_url}}/v1/cases/{{case_id}}"
+          }
+        },
+        {
+          "name": "POST Add Comment (Create)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 201 or 200 replay', function () {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Investigating replication lag with engineering team.\"\n}"
+            },
+            "url": "{{base_url}}/v1/cases/{{case_id}}/comments"
+          }
+        },
+        {
+          "name": "POST Add Comment (Idempotency Replay Regression)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Replay returns 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('idempotent_replay flag is true', function () {",
+                  "  pm.expect(pm.response.json().idempotent_replay).to.eql(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Investigating replication lag with engineering team.\"\n}"
+            },
+            "url": "{{base_url}}/v1/cases/{{case_id}}/comments"
+          }
+        },
+        {
+          "name": "POST Escalate Case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Status transitioned to escalated', function () {",
+                  "  pm.expect(pm.response.json().status).to.eql('escalated');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "If-Match", "value": "{{case_etag}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Platinum SLA breach risk\",\n  \"notify_customer\": true\n}"
+            },
+            "url": "{{base_url}}/v1/cases/{{case_id}}/escalate"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "POST Register Webhook",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"http://localhost:8000/v1/webhooks/test\",\n  \"events\": [\"case.escalated\"],\n  \"secret\": \"demo_webhook_secret_123456\"\n}"
+            },
+            "url": "{{base_url}}/v1/webhooks"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Scenarios",
+      "item": [
+        {
+          "name": "Unauthorized (Missing Bearer Token -> 401 RFC 9457)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('RFC 9457 problem+json body', function () {",
+                  "  pm.expect(pm.response.json()).to.have.property('title');",
+                  "  pm.expect(pm.response.json().status).to.eql(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/cases"
+          }
+        }
+      ]
+    }
+  ]
+}

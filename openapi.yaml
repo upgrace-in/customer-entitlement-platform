@@ -1,0 +1,657 @@
+openapi: 3.1.0
+info:
+  title: Customer Entitlement & Support Case API
+  version: 1.0.0
+  summary: Unified platform API aggregating support cases, customer entitlements, and usage telemetry.
+  description: |
+    ## Overview
+    The **Customer Entitlement & Support Case API** provides a canonical platform layer in front of three internal systems:
+    - **Case System (Salesforce-like):** Cases, comments, priorities, SLA statuses.
+    - **Entitlement System (NetSuite-like):** Accounts, support tiers, contract renewal dates, ARR.
+    - **Usage Warehouse (Snowflake-like):** Monthly product telemetry (`protected_tb`, `api_calls`, `active_users`).
+
+    ### Resource Modelling & Aggregation Boundary
+    - **Aggregated:** `GET /v1/customers/{id}` composes NetSuite entitlement, Snowflake usage, and Salesforce open-case counts into one consumer view. If non-critical upstreams fail, the response degrades gracefully via `degraded_sources`.
+    - **Normalized Pass-Through:** `/v1/cases` uses an Anti-Corruption Layer (ACL) to normalize inconsistent upstream field names (`case_id`, `created_at`, `Open`) into a consistent canonical contract.
+
+    ### Why REST (vs. GraphQL or gRPC)
+    - **REST (chosen here):** Ideal for mixed consumers (MuleSoft/iPaaS connectors, HTTP webhooks, curl/Postman, and MCP tool wrappers) with standard HTTP caching (`ETag`), idempotency headers, and RFC 9457 error semantics.
+    - **GraphQL would be better when:** Frontend dashboards require deeply nested, client-driven field selection across dozens of entities to prevent over-fetching.
+    - **gRPC would be better when:** High-throughput internal microservice-to-microservice calls need strict protobuf binary framing, bidirectional streaming, or sub-millisecond serialization.
+
+    ### Versioning & Deprecation Strategy
+    - Major breaking changes use URL path prefixes (`/v1/`, `/v2/`).
+    - Non-breaking additive fields are released within `/v1/`.
+    - Deprecated endpoints emit RFC 8594 `Deprecation` and `Sunset` HTTP headers with >= 6 months notice.
+
+    ### AuthN / AuthZ (OAuth 2.0 / OIDC)
+    - Bearer JWT tokens carry explicit scopes: `cases:read`, `cases:write`, `customers:read`, `finance:read`.
+    - **Per-field authorization:** `arr_usd` is omitted server-side unless the caller token carries `finance:read`.
+
+    ### Idempotency, Concurrency & Rate Limits
+    - `POST /v1/cases/{id}/comments` requires `Idempotency-Key` (24-hour TTL; same key + different body returns `409 Conflict`).
+    - `POST /v1/cases/{id}/escalate` requires `If-Match` with the resource `ETag` (`412 Precondition Failed` on stale write).
+    - All responses emit `X-Correlation-ID` and `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+
+    ### Error Model
+    All error responses conform to **RFC 9457** (`application/problem+json`).
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.example.com
+    description: Production platform gateway
+
+tags:
+  - name: Customers
+    description: Aggregated customer entitlement, usage, and case health
+  - name: Cases
+    description: Support case search, idempotent commenting, and validated escalation
+  - name: Webhooks
+    description: Webhook subscriptions and HMAC-SHA256 signed event delivery
+  - name: Health
+    description: Liveness and readiness probes
+
+security:
+  - oauth2: []
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      tags: [Health]
+      summary: Liveness & upstream circuit-breaker health check
+      security: []
+      responses:
+        "200":
+          description: Service health status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, version, uptime_seconds, checks]
+                properties:
+                  status: { type: string, enum: [healthy, degraded] }
+                  version: { type: string }
+                  uptime_seconds: { type: number }
+                  checks:
+                    type: object
+                    additionalProperties: { type: string }
+
+  /v1/customers/{id}:
+    get:
+      operationId: getCustomerSummary
+      tags: [Customers]
+      summary: Get aggregated customer view
+      description: Aggregates entitlement, recent monthly usage, and open case count. Degrades gracefully if usage or case systems are unavailable.
+      security:
+        - oauth2: [customers:read]
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CustomerId"
+        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/IfNoneMatch"
+        - name: usage_months
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 24, default: 3 }
+      responses:
+        "200":
+          description: Aggregated customer summary
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            X-Correlation-ID: { $ref: "#/components/headers/X-Correlation-ID" }
+            X-RateLimit-Limit: { $ref: "#/components/headers/X-RateLimit-Limit" }
+            X-RateLimit-Remaining: { $ref: "#/components/headers/X-RateLimit-Remaining" }
+            X-RateLimit-Reset: { $ref: "#/components/headers/X-RateLimit-Reset" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSummary"
+        "304":
+          description: Not Modified
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /v1/cases:
+    get:
+      operationId: listCases
+      tags: [Cases]
+      summary: List and filter support cases with cursor pagination
+      security:
+        - oauth2: [cases:read]
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/CaseStatus"
+        - name: priority
+          in: query
+          schema:
+            $ref: "#/components/schemas/CasePriority"
+        - name: account_id
+          in: query
+          schema: { type: string, minLength: 1 }
+        - name: opened_after
+          in: query
+          schema: { type: string, format: date-time }
+        - name: opened_before
+          in: query
+          schema: { type: string, format: date-time }
+        - name: search
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: sort_by
+          in: query
+          schema: { type: string, enum: [opened_at, priority, status], default: opened_at }
+        - name: sort_order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 512 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        "200":
+          description: Paginated list of cases
+          headers:
+            X-Correlation-ID: { $ref: "#/components/headers/X-Correlation-ID" }
+            X-RateLimit-Limit: { $ref: "#/components/headers/X-RateLimit-Limit" }
+            X-RateLimit-Remaining: { $ref: "#/components/headers/X-RateLimit-Remaining" }
+            X-RateLimit-Reset: { $ref: "#/components/headers/X-RateLimit-Reset" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseListResponse"
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /v1/cases/{id}:
+    get:
+      operationId: getCaseById
+      tags: [Cases]
+      summary: Get a single support case
+      security:
+        - oauth2: [cases:read]
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Support case details
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            X-Correlation-ID: { $ref: "#/components/headers/X-Correlation-ID" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/cases/{id}/comments:
+    post:
+      operationId: addCaseComment
+      tags: [Cases]
+      summary: Idempotently add a comment to a case
+      security:
+        - oauth2: [cases:write]
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: If-Match
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+      responses:
+        "201":
+          description: Comment created
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            X-Correlation-ID: { $ref: "#/components/headers/X-Correlation-ID" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentCreatedResponse"
+        "200":
+          description: Idempotent replay of previously created comment
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentCreatedResponse"
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/BusinessRuleViolation" }
+
+  /v1/cases/{id}/escalate:
+    post:
+      operationId: escalateCase
+      tags: [Cases]
+      summary: Escalate a support case (state transition + webhook)
+      description: |
+        Transitions an `open` or `in_progress` case to `escalated`.
+        - Enforces optimistic concurrency via `If-Match`.
+        - Platinum customers route to `oncall-platinum@platform.internal`.
+        - P1 cases automatically set `notify_customer=true`.
+        - Emits a signed `case.escalated` webhook event.
+      security:
+        - oauth2: [cases:write]
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EscalateRequest"
+      responses:
+        "200":
+          description: Case escalated
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            X-Correlation-ID: { $ref: "#/components/headers/X-Correlation-ID" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseResponse"
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/BusinessRuleViolation" }
+
+  /v1/webhooks:
+    post:
+      operationId: registerWebhook
+      tags: [Webhooks]
+      summary: Register a webhook subscription
+      security:
+        - oauth2: [cases:write]
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookSubscriptionRequest"
+      responses:
+        "201":
+          description: Webhook subscription created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSubscriptionResponse"
+    get:
+      operationId: listWebhooks
+      tags: [Webhooks]
+      summary: List registered webhook subscriptions
+      security:
+        - oauth2: [cases:read]
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total_count]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookSubscriptionResponse" }
+                  total_count: { type: integer, minimum: 0 }
+
+  /v1/webhooks/{webhookId}:
+    delete:
+      operationId: deleteWebhook
+      tags: [Webhooks]
+      summary: Delete a webhook subscription
+      security:
+        - oauth2: [cases:write]
+        - bearerAuth: []
+      parameters:
+        - name: webhookId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+webhooks:
+  caseEscalated:
+    post:
+      operationId: onCaseEscalated
+      summary: case.escalated webhook event
+      description: |
+        Dispatched whenever a case transitions to `escalated`.
+        Verify authenticity using `X-Signature-256: sha256=<HMAC-SHA256(secret, raw_body)>`
+        and check `X-Webhook-Timestamp` within 300 seconds to prevent replay attacks.
+      parameters:
+        - name: X-Signature-256
+          in: header
+          required: true
+          schema: { type: string, pattern: "^sha256=[a-f0-9]{64}$" }
+        - name: X-Webhook-ID
+          in: header
+          required: true
+          schema: { type: string }
+        - name: X-Webhook-Timestamp
+          in: header
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        "200": { description: Event acknowledged }
+        "204": { description: Event acknowledged }
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.com/oauth/token
+          scopes:
+            cases:read: Read support cases and comments
+            cases:write: Add comments, escalate cases, manage webhooks
+            customers:read: Read customer profiles, entitlements, and usage
+            finance:read: Access ARR financial figures (arr_usd)
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    CustomerId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^ACC-[0-9]{2,6}$" }
+      example: ACC-007
+    CaseId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^CS-[0-9]{4,8}$" }
+      example: CS-10231
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1 }
+      example: d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: { type: string }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema: { type: string }
+
+  headers:
+    ETag:
+      schema: { type: string }
+    X-Correlation-ID:
+      schema: { type: string }
+    X-RateLimit-Limit:
+      schema: { type: integer }
+    X-RateLimit-Remaining:
+      schema: { type: integer }
+    X-RateLimit-Reset:
+      schema: { type: integer, format: int64 }
+
+  schemas:
+    CasePriority:
+      type: string
+      enum: [P1, P2, P3, P4]
+
+    CaseStatus:
+      type: string
+      enum: [open, in_progress, escalated, resolved, closed]
+
+    CaseComment:
+      type: object
+      required: [author, body, at]
+      properties:
+        author: { type: string }
+        body: { type: string }
+        at: { type: string, format: date-time }
+
+    CaseResponse:
+      type: object
+      required: [id, account_id, priority, status, opened_at, subject, comments, etag]
+      properties:
+        id: { type: string }
+        account_id: { type: string }
+        priority: { $ref: "#/components/schemas/CasePriority" }
+        status: { $ref: "#/components/schemas/CaseStatus" }
+        opened_at: { type: string, format: date-time }
+        subject: { type: string }
+        assignee: { type: [string, "null"] }
+        comments:
+          type: array
+          items: { $ref: "#/components/schemas/CaseComment" }
+        escalated_at: { type: [string, "null"], format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        etag: { type: string }
+
+    CursorPagination:
+      type: object
+      required: [has_more, total_count]
+      properties:
+        next_cursor: { type: [string, "null"] }
+        has_more: { type: boolean }
+        total_count: { type: integer, minimum: 0 }
+
+    CaseListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/CaseResponse" }
+        pagination: { $ref: "#/components/schemas/CursorPagination" }
+
+    UsageSummary:
+      type: object
+      required: [month, protected_tb, api_calls, active_users]
+      properties:
+        month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+        protected_tb: { type: number, minimum: 0 }
+        api_calls: { type: integer, minimum: 0 }
+        active_users: { type: integer, minimum: 0 }
+
+    CustomerSummary:
+      type: object
+      required: [id, name, support_tier, contract_end, usage, open_cases_count, degraded_sources]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        support_tier: { type: string, enum: [Platinum, Gold, Silver, Bronze] }
+        contract_end: { type: string, format: date }
+        arr_usd:
+          type: [number, "null"]
+          description: Present only when caller token includes `finance:read` scope.
+        usage:
+          type: array
+          items: { $ref: "#/components/schemas/UsageSummary" }
+        open_cases_count: { type: integer, minimum: 0 }
+        degraded_sources:
+          type: array
+          items: { type: string }
+
+    CreateCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 10000 }
+
+    CommentCreatedResponse:
+      type: object
+      required: [case_id, comment, etag, idempotent_replay]
+      properties:
+        case_id: { type: string }
+        comment: { $ref: "#/components/schemas/CaseComment" }
+        etag: { type: string }
+        idempotent_replay: { type: boolean }
+
+    EscalateRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+        notify_customer: { type: boolean, default: false }
+
+    WebhookSubscriptionRequest:
+      type: object
+      required: [url, events]
+      properties:
+        url: { type: string, minLength: 8, maxLength: 2048 }
+        events:
+          type: array
+          minItems: 1
+          items: { type: string }
+        secret: { type: string, minLength: 16, maxLength: 256 }
+
+    WebhookSubscriptionResponse:
+      type: object
+      required: [id, url, events, active, created_at]
+      properties:
+        id: { type: string }
+        url: { type: string }
+        events:
+          type: array
+          items: { type: string }
+        secret: { type: [string, "null"] }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    WebhookEvent:
+      type: object
+      required: [event_id, event_type, timestamp, webhook_id, payload, signature]
+      properties:
+        event_id: { type: string }
+        event_type: { type: string }
+        timestamp: { type: string, format: date-time }
+        webhook_id: { type: string }
+        payload: { type: object, additionalProperties: true }
+        signature: { type: string }
+
+    ProblemDetail:
+      type: object
+      required: [type, title, status, detail]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: string }
+        instance: { type: [string, "null"] }
+        errors:
+          type: array
+          items: { type: object, additionalProperties: true }
+        correlationId: { type: string }
+        retryAfter: { type: integer }
+        upstreamService: { type: string }
+        allowedTransitions:
+          type: array
+          items: { type: object, additionalProperties: true }
+      additionalProperties: true
+
+  responses:
+    ValidationError:
+      description: 400 Validation Error (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    Unauthorized:
+      description: 401 Unauthorized (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    Forbidden:
+      description: 403 Insufficient Scope (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    NotFound:
+      description: 404 Not Found (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    IdempotencyConflict:
+      description: 409 Idempotency Conflict (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    PreconditionFailed:
+      description: 412 ETag Mismatch (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    BusinessRuleViolation:
+      description: 422 Business Rule Violation (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    TooManyRequests:
+      description: 429 Rate Limit Exceeded (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    UpstreamFailure:
+      description: 502 Upstream Service Failure (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    ServiceUnavailable:
+      description: 503 Service Unavailable (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }

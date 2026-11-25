@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=development
+      - JWT_SECRET=dev-secret-do-not-use-in-production
+      - DATABASE_URL=sqlite+aiosqlite:///./data/entitlements.db
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
